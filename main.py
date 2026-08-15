@@ -1,3 +1,4 @@
+from random import uniform
 from queue import Empty, Queue
 from threading import Event, Lock, Thread
 from time import sleep
@@ -172,8 +173,14 @@ def workerThread(workerName, orderQueue):
 
         orderId = order.get("orderId", "SIN-ID")
         customer = order.get("customer", "SIN-CLIENTE")
-        print(f"[{workerName}] Extrae pedido {orderId} | Cliente: {customer}")
-        sleep(0.01)
+        processTime = uniform(0.5, 2.0)
+
+        print(f"[{workerName}] Inicia pedido {orderId} | Cliente: {customer}")
+        sleep(processTime)
+        print(
+            f"[{workerName}] Termina revision preliminar de {orderId} "
+            f"| Tiempo: {processTime:.2f} segundos"
+        )
         orderQueue.task_done()
 
 
@@ -191,7 +198,7 @@ def createWorkerThreads(orderQueue):
 
 def runApplication():
     print("NovaTech - Procesamiento concurrente de pedidos")
-    print("ETAPA 5: trabajadores creados correctamente.")
+    print("ETAPA 6: procesamiento concurrente activo.")
     inventory = createInitialInventory()
     orders = createOrders()
     orderQueue = loadOrderQueue(orders)
