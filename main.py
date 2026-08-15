@@ -170,6 +170,7 @@ def createResults():
         "approvedOrders": 0,
         "rejectedOrders": 0,
         "failedOrders": 0,
+        "activeWorkers": 0,
     }
 
 
@@ -191,6 +192,16 @@ def updateResults(results, resultsLock, status):
             results["rejectedOrders"] += 1
         else:
             results["failedOrders"] += 1
+
+
+def setActiveWorkers(results, resultsLock, activeWorkers):
+    with resultsLock:
+        results["activeWorkers"] = activeWorkers
+
+
+def decreaseActiveWorkers(results, resultsLock):
+    with resultsLock:
+        results["activeWorkers"] -= 1
 
 
 def showResultsSummary(results, resultsLock):
@@ -243,43 +254,48 @@ def hasNegativeStock(inventory):
 
 
 def workerThread(workerName, orderQueue, inventory, inventoryLock, results, resultsLock):
-    while True:
-        try:
-            order = orderQueue.get_nowait()
-        except Empty:
-            logWorkerMessage(workerName, "No hay mas pedidos. Trabajador finalizado.")
-            break
+    try:
+        while True:
+            try:
+                order = orderQueue.get_nowait()
+            except Empty:
+                logWorkerMessage(workerName, "No hay mas pedidos. Trabajador finalizado.")
+                break
 
-        try:
-            orderId = order.get("orderId", "SIN-ID")
-            customer = order.get("customer", "SIN-CLIENTE")
-            processTime = uniform(0.5, 2.0)
+            try:
+                orderId = order.get("orderId", "SIN-ID")
+                customer = order.get("customer", "SIN-CLIENTE")
+                processTime = uniform(0.5, 2.0)
 
-            logWorkerMessage(workerName, f"Inicia pedido {orderId} | Cliente: {customer}")
-            sleep(processTime)
-            status, resultMessage = processOrderInventory(order, inventory, inventoryLock)
-        except Exception as error:
-            orderId = "SIN-ID"
-            customer = "SIN-CLIENTE"
-            status = "FAILED"
-            resultMessage = f"Error inesperado: {error}"
+                logWorkerMessage(workerName, f"Inicia pedido {orderId} | Cliente: {customer}")
+                sleep(processTime)
+                status, resultMessage = processOrderInventory(order, inventory, inventoryLock)
+            except Exception as error:
+                orderId = "SIN-ID"
+                customer = "SIN-CLIENTE"
+                status = "FAILED"
+                resultMessage = f"Error inesperado: {error}"
 
-        updateResults(results, resultsLock, status)
+            updateResults(results, resultsLock, status)
 
-        if status == "APPROVED":
-            logWorkerMessage(
-                workerName,
-                f"{orderId} APROBADO | Cliente: {customer} | {resultMessage}",
-            )
-        elif status == "REJECTED":
-            logWorkerMessage(
-                workerName,
-                f"{orderId} RECHAZADO | Cliente: {customer} | {resultMessage}",
-            )
-        else:
-            logWorkerMessage(workerName, f"{orderId} ERROR | Cliente: {customer} | {resultMessage}")
+            if status == "APPROVED":
+                logWorkerMessage(
+                    workerName,
+                    f"{orderId} APROBADO | Cliente: {customer} | {resultMessage}",
+                )
+            elif status == "REJECTED":
+                logWorkerMessage(
+                    workerName,
+                    f"{orderId} RECHAZADO | Cliente: {customer} | {resultMessage}",
+                )
+            else:
+                logWorkerMessage(
+                    workerName, f"{orderId} ERROR | Cliente: {customer} | {resultMessage}"
+                )
 
-        orderQueue.task_done()
+            orderQueue.task_done()
+    finally:
+        decreaseActiveWorkers(results, resultsLock)
 
 
 def createWorkerThreads(orderQueue, inventory, inventoryLock, results, resultsLock):
@@ -294,21 +310,58 @@ def createWorkerThreads(orderQueue, inventory, inventoryLock, results, resultsLo
     ]
 
 
+def monitorThread(orderQueue, results, resultsLock, monitorStopEvent):
+    while not monitorStopEvent.is_set():
+        with resultsLock:
+            approvedOrders = results["approvedOrders"]
+            rejectedOrders = results["rejectedOrders"]
+            failedOrders = results["failedOrders"]
+            activeWorkers = results["activeWorkers"]
+
+        print(
+            f"[{getCurrentTimestamp()}] [MONITOR] "
+            f"Pendientes: {orderQueue.qsize()} | "
+            f"Aprobados: {approvedOrders} | "
+            f"Rechazados: {rejectedOrders} | "
+            f"Fallidos: {failedOrders} | "
+            f"Trabajadores activos: {activeWorkers}"
+        )
+
+        monitorStopEvent.wait(1.0)
+
+    print(f"[{getCurrentTimestamp()}] [MONITOR] Monitor detenido correctamente.")
+
+
+def createMonitorThread(orderQueue, results, resultsLock, monitorStopEvent):
+    return Thread(
+        target=monitorThread,
+        name="MONITOR",
+        args=(orderQueue, results, resultsLock, monitorStopEvent),
+    )
+
+
 def runApplication():
     print("NovaTech - Procesamiento concurrente de pedidos")
-    print("ETAPA 8: resultados y errores registrados correctamente.")
+    print("ETAPA 9: monitor de procesamiento activo.")
     inventory = createInitialInventory()
     inventoryLock = Lock()
     results = createResults()
     resultsLock = Lock()
+    monitorStopEvent = Event()
     orders = createOrders()
     orderQueue = loadOrderQueue(orders)
     workerThreads = createWorkerThreads(
         orderQueue, inventory, inventoryLock, results, resultsLock
     )
+    monitor = createMonitorThread(orderQueue, results, resultsLock, monitorStopEvent)
 
     showInventory(inventory, "Inventario inicial")
     showOrdersSummary(orders)
+
+    setActiveWorkers(results, resultsLock, len(workerThreads))
+
+    print("\nIniciando monitor:")
+    monitor.start()
 
     print("\nIniciando trabajadores:")
     for worker in workerThreads:
@@ -318,6 +371,9 @@ def runApplication():
     for worker in workerThreads:
         worker.join()
         print(f"join completado para {worker.name}")
+
+    monitorStopEvent.set()
+    monitor.join()
 
     print(f"Pedidos pendientes al finalizar: {orderQueue.qsize()}")
     showResultsSummary(results, resultsLock)
