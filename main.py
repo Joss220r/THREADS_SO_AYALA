@@ -1,5 +1,6 @@
-from queue import Queue
+from queue import Empty, Queue
 from threading import Event, Lock, Thread
+from time import sleep
 
 
 def createInitialInventory():
@@ -161,36 +162,54 @@ def loadOrderQueue(orders):
     return orderQueue
 
 
-def testOrderQueue(orderQueue):
-    extractedOrderIds = []
-    print("\nPrueba temporal de cola compartida:")
-    print(f"Pedidos pendientes al iniciar: {orderQueue.qsize()}")
+def workerThread(workerName, orderQueue):
+    while True:
+        try:
+            order = orderQueue.get_nowait()
+        except Empty:
+            print(f"[{workerName}] No hay mas pedidos. Trabajador finalizado.")
+            break
 
-    while not orderQueue.empty():
-        order = orderQueue.get()
         orderId = order.get("orderId", "SIN-ID")
-        extractedOrderIds.append(orderId)
-        print(f"Extraido de la cola: {orderId}")
+        customer = order.get("customer", "SIN-CLIENTE")
+        print(f"[{workerName}] Extrae pedido {orderId} | Cliente: {customer}")
+        sleep(0.01)
         orderQueue.task_done()
 
-    duplicatedOrderIds = {
-        orderId for orderId in extractedOrderIds if extractedOrderIds.count(orderId) > 1
-    }
 
-    print(f"Pedidos extraidos: {len(extractedOrderIds)}")
-    print(f"Pedidos pendientes al finalizar: {orderQueue.qsize()}")
-    print(f"Pedidos duplicados detectados: {len(duplicatedOrderIds)}")
+def createWorkerThreads(orderQueue):
+    workerNames = ["WORKER-1", "WORKER-2", "WORKER-3"]
+    return [
+        Thread(
+            target=workerThread,
+            name=workerName,
+            args=(workerName, orderQueue),
+        )
+        for workerName in workerNames
+    ]
 
 
 def runApplication():
     print("NovaTech - Procesamiento concurrente de pedidos")
-    print("ETAPA 4: cola compartida cargada correctamente.")
+    print("ETAPA 5: trabajadores creados correctamente.")
     inventory = createInitialInventory()
     orders = createOrders()
     orderQueue = loadOrderQueue(orders)
+    workerThreads = createWorkerThreads(orderQueue)
+
     showInventory(inventory)
     showOrdersSummary(orders)
-    testOrderQueue(orderQueue)
+
+    print("\nIniciando trabajadores:")
+    for worker in workerThreads:
+        print(f"Se inicia {worker.name}")
+        worker.start()
+
+    for worker in workerThreads:
+        worker.join()
+        print(f"join completado para {worker.name}")
+
+    print(f"Pedidos pendientes al finalizar: {orderQueue.qsize()}")
 
 
 if __name__ == "__main__":
