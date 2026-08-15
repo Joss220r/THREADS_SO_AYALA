@@ -154,13 +154,43 @@ def showOrdersSummary(orders):
         print(f"{orderId} | Cliente: {customer} | Productos: {len(products)}")
 
 
+def loadOrderQueue(orders):
+    orderQueue = Queue()
+    for order in orders:
+        orderQueue.put(order)
+    return orderQueue
+
+
+def testOrderQueue(orderQueue):
+    extractedOrderIds = []
+    print("\nPrueba temporal de cola compartida:")
+    print(f"Pedidos pendientes al iniciar: {orderQueue.qsize()}")
+
+    while not orderQueue.empty():
+        order = orderQueue.get()
+        orderId = order.get("orderId", "SIN-ID")
+        extractedOrderIds.append(orderId)
+        print(f"Extraido de la cola: {orderId}")
+        orderQueue.task_done()
+
+    duplicatedOrderIds = {
+        orderId for orderId in extractedOrderIds if extractedOrderIds.count(orderId) > 1
+    }
+
+    print(f"Pedidos extraidos: {len(extractedOrderIds)}")
+    print(f"Pedidos pendientes al finalizar: {orderQueue.qsize()}")
+    print(f"Pedidos duplicados detectados: {len(duplicatedOrderIds)}")
+
+
 def runApplication():
     print("NovaTech - Procesamiento concurrente de pedidos")
-    print("ETAPA 3: inventario y pedidos cargados correctamente.")
+    print("ETAPA 4: cola compartida cargada correctamente.")
     inventory = createInitialInventory()
     orders = createOrders()
+    orderQueue = loadOrderQueue(orders)
     showInventory(inventory)
     showOrdersSummary(orders)
+    testOrderQueue(orderQueue)
 
 
 if __name__ == "__main__":
