@@ -29,8 +29,8 @@ def createInitialInventory():
     }
 
 
-def showInventory(inventory):
-    print("\nInventario inicial:")
+def showInventory(inventory, title="Inventario"):
+    print(f"\n{title}:")
     for productCode, productData in inventory.items():
         productName = productData["productName"]
         stock = productData["stock"]
@@ -163,7 +163,41 @@ def loadOrderQueue(orders):
     return orderQueue
 
 
-def workerThread(workerName, orderQueue):
+def processOrderInventory(order, inventory, inventoryLock):
+    products = order.get("products")
+    if not isinstance(products, list) or len(products) == 0:
+        return False, "Pedido sin productos validos"
+
+    with inventoryLock:
+        for product in products:
+            productCode = product.get("productCode")
+            quantity = product.get("quantity")
+
+            if productCode not in inventory:
+                return False, f"Producto inexistente {productCode}"
+
+            if not isinstance(quantity, int) or quantity <= 0:
+                return False, f"Cantidad invalida {productCode}"
+
+            availableStock = inventory[productCode]["stock"]
+            if availableStock < quantity:
+                return False, f"Stock insuficiente {productCode}"
+
+        approvedDetails = []
+        for product in products:
+            productCode = product["productCode"]
+            quantity = product["quantity"]
+            inventory[productCode]["stock"] -= quantity
+            approvedDetails.append(f"{productCode}: -{quantity} unidades")
+
+    return True, ", ".join(approvedDetails)
+
+
+def hasNegativeStock(inventory):
+    return any(productData["stock"] < 0 for productData in inventory.values())
+
+
+def workerThread(workerName, orderQueue, inventory, inventoryLock):
     while True:
         try:
             order = orderQueue.get_nowait()
@@ -177,20 +211,23 @@ def workerThread(workerName, orderQueue):
 
         print(f"[{workerName}] Inicia pedido {orderId} | Cliente: {customer}")
         sleep(processTime)
-        print(
-            f"[{workerName}] Termina revision preliminar de {orderId} "
-            f"| Tiempo: {processTime:.2f} segundos"
-        )
+        isApproved, resultMessage = processOrderInventory(order, inventory, inventoryLock)
+
+        if isApproved:
+            print(f"[{workerName}] {orderId} APROBADO | {resultMessage}")
+        else:
+            print(f"[{workerName}] {orderId} RECHAZADO | {resultMessage}")
+
         orderQueue.task_done()
 
 
-def createWorkerThreads(orderQueue):
+def createWorkerThreads(orderQueue, inventory, inventoryLock):
     workerNames = ["WORKER-1", "WORKER-2", "WORKER-3"]
     return [
         Thread(
             target=workerThread,
             name=workerName,
-            args=(workerName, orderQueue),
+            args=(workerName, orderQueue, inventory, inventoryLock),
         )
         for workerName in workerNames
     ]
@@ -198,13 +235,14 @@ def createWorkerThreads(orderQueue):
 
 def runApplication():
     print("NovaTech - Procesamiento concurrente de pedidos")
-    print("ETAPA 6: procesamiento concurrente activo.")
+    print("ETAPA 7: inventario sincronizado con Lock.")
     inventory = createInitialInventory()
+    inventoryLock = Lock()
     orders = createOrders()
     orderQueue = loadOrderQueue(orders)
-    workerThreads = createWorkerThreads(orderQueue)
+    workerThreads = createWorkerThreads(orderQueue, inventory, inventoryLock)
 
-    showInventory(inventory)
+    showInventory(inventory, "Inventario inicial")
     showOrdersSummary(orders)
 
     print("\nIniciando trabajadores:")
@@ -217,6 +255,8 @@ def runApplication():
         print(f"join completado para {worker.name}")
 
     print(f"Pedidos pendientes al finalizar: {orderQueue.qsize()}")
+    showInventory(inventory, "Inventario final temporal")
+    print(f"Inventario negativo detectado: {hasNegativeStock(inventory)}")
 
 
 if __name__ == "__main__":
