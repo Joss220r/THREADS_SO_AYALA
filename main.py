@@ -1,3 +1,4 @@
+from datetime import datetime
 from random import uniform
 from queue import Empty, Queue
 from threading import Event, Lock, Thread
@@ -163,25 +164,69 @@ def loadOrderQueue(orders):
     return orderQueue
 
 
+def createResults():
+    return {
+        "processedOrders": 0,
+        "approvedOrders": 0,
+        "rejectedOrders": 0,
+        "failedOrders": 0,
+    }
+
+
+def getCurrentTimestamp():
+    return datetime.now().strftime("%H:%M:%S.%f")[:-3]
+
+
+def logWorkerMessage(workerName, message):
+    print(f"[{getCurrentTimestamp()}] [{workerName}] {message}")
+
+
+def updateResults(results, resultsLock, status):
+    with resultsLock:
+        results["processedOrders"] += 1
+
+        if status == "APPROVED":
+            results["approvedOrders"] += 1
+        elif status == "REJECTED":
+            results["rejectedOrders"] += 1
+        else:
+            results["failedOrders"] += 1
+
+
+def showResultsSummary(results, resultsLock):
+    with resultsLock:
+        print("\nResumen temporal de resultados:")
+        print(f"Procesados: {results['processedOrders']}")
+        print(f"Aprobados: {results['approvedOrders']}")
+        print(f"Rechazados: {results['rejectedOrders']}")
+        print(f"Fallidos: {results['failedOrders']}")
+
+
 def processOrderInventory(order, inventory, inventoryLock):
+    if not isinstance(order, dict):
+        return "FAILED", "Pedido con estructura invalida"
+
     products = order.get("products")
     if not isinstance(products, list) or len(products) == 0:
-        return False, "Pedido sin productos validos"
+        return "FAILED", "Pedido sin productos validos"
 
     with inventoryLock:
         for product in products:
+            if not isinstance(product, dict):
+                return "FAILED", "Producto con estructura invalida"
+
             productCode = product.get("productCode")
             quantity = product.get("quantity")
 
             if productCode not in inventory:
-                return False, f"Producto inexistente {productCode}"
+                return "FAILED", f"Producto inexistente {productCode}"
 
             if not isinstance(quantity, int) or quantity <= 0:
-                return False, f"Cantidad invalida {productCode}"
+                return "FAILED", f"Cantidad invalida {productCode}"
 
             availableStock = inventory[productCode]["stock"]
             if availableStock < quantity:
-                return False, f"Stock insuficiente {productCode}"
+                return "REJECTED", f"Stock insuficiente {productCode}"
 
         approvedDetails = []
         for product in products:
@@ -190,44 +235,60 @@ def processOrderInventory(order, inventory, inventoryLock):
             inventory[productCode]["stock"] -= quantity
             approvedDetails.append(f"{productCode}: -{quantity} unidades")
 
-    return True, ", ".join(approvedDetails)
+    return "APPROVED", ", ".join(approvedDetails)
 
 
 def hasNegativeStock(inventory):
     return any(productData["stock"] < 0 for productData in inventory.values())
 
 
-def workerThread(workerName, orderQueue, inventory, inventoryLock):
+def workerThread(workerName, orderQueue, inventory, inventoryLock, results, resultsLock):
     while True:
         try:
             order = orderQueue.get_nowait()
         except Empty:
-            print(f"[{workerName}] No hay mas pedidos. Trabajador finalizado.")
+            logWorkerMessage(workerName, "No hay mas pedidos. Trabajador finalizado.")
             break
 
-        orderId = order.get("orderId", "SIN-ID")
-        customer = order.get("customer", "SIN-CLIENTE")
-        processTime = uniform(0.5, 2.0)
+        try:
+            orderId = order.get("orderId", "SIN-ID")
+            customer = order.get("customer", "SIN-CLIENTE")
+            processTime = uniform(0.5, 2.0)
 
-        print(f"[{workerName}] Inicia pedido {orderId} | Cliente: {customer}")
-        sleep(processTime)
-        isApproved, resultMessage = processOrderInventory(order, inventory, inventoryLock)
+            logWorkerMessage(workerName, f"Inicia pedido {orderId} | Cliente: {customer}")
+            sleep(processTime)
+            status, resultMessage = processOrderInventory(order, inventory, inventoryLock)
+        except Exception as error:
+            orderId = "SIN-ID"
+            customer = "SIN-CLIENTE"
+            status = "FAILED"
+            resultMessage = f"Error inesperado: {error}"
 
-        if isApproved:
-            print(f"[{workerName}] {orderId} APROBADO | {resultMessage}")
+        updateResults(results, resultsLock, status)
+
+        if status == "APPROVED":
+            logWorkerMessage(
+                workerName,
+                f"{orderId} APROBADO | Cliente: {customer} | {resultMessage}",
+            )
+        elif status == "REJECTED":
+            logWorkerMessage(
+                workerName,
+                f"{orderId} RECHAZADO | Cliente: {customer} | {resultMessage}",
+            )
         else:
-            print(f"[{workerName}] {orderId} RECHAZADO | {resultMessage}")
+            logWorkerMessage(workerName, f"{orderId} ERROR | Cliente: {customer} | {resultMessage}")
 
         orderQueue.task_done()
 
 
-def createWorkerThreads(orderQueue, inventory, inventoryLock):
+def createWorkerThreads(orderQueue, inventory, inventoryLock, results, resultsLock):
     workerNames = ["WORKER-1", "WORKER-2", "WORKER-3"]
     return [
         Thread(
             target=workerThread,
             name=workerName,
-            args=(workerName, orderQueue, inventory, inventoryLock),
+            args=(workerName, orderQueue, inventory, inventoryLock, results, resultsLock),
         )
         for workerName in workerNames
     ]
@@ -235,12 +296,16 @@ def createWorkerThreads(orderQueue, inventory, inventoryLock):
 
 def runApplication():
     print("NovaTech - Procesamiento concurrente de pedidos")
-    print("ETAPA 7: inventario sincronizado con Lock.")
+    print("ETAPA 8: resultados y errores registrados correctamente.")
     inventory = createInitialInventory()
     inventoryLock = Lock()
+    results = createResults()
+    resultsLock = Lock()
     orders = createOrders()
     orderQueue = loadOrderQueue(orders)
-    workerThreads = createWorkerThreads(orderQueue, inventory, inventoryLock)
+    workerThreads = createWorkerThreads(
+        orderQueue, inventory, inventoryLock, results, resultsLock
+    )
 
     showInventory(inventory, "Inventario inicial")
     showOrdersSummary(orders)
@@ -255,6 +320,7 @@ def runApplication():
         print(f"join completado para {worker.name}")
 
     print(f"Pedidos pendientes al finalizar: {orderQueue.qsize()}")
+    showResultsSummary(results, resultsLock)
     showInventory(inventory, "Inventario final temporal")
     print(f"Inventario negativo detectado: {hasNegativeStock(inventory)}")
 
