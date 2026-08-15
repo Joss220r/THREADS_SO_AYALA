@@ -2,7 +2,7 @@ from datetime import datetime
 from random import uniform
 from queue import Empty, Queue
 from threading import Event, Lock, Thread
-from time import sleep
+from time import perf_counter, sleep
 
 
 def createInitialInventory():
@@ -204,13 +204,23 @@ def decreaseActiveWorkers(results, resultsLock):
         results["activeWorkers"] -= 1
 
 
-def showResultsSummary(results, resultsLock):
+def showFinalSummary(results, resultsLock, totalTime, inventory, orderQueue, workerThreads, monitor):
     with resultsLock:
-        print("\nResumen temporal de resultados:")
+        print("\nRESUMEN FINAL")
         print(f"Procesados: {results['processedOrders']}")
         print(f"Aprobados: {results['approvedOrders']}")
         print(f"Rechazados: {results['rejectedOrders']}")
-        print(f"Fallidos: {results['failedOrders']}")
+        print(f"Error: {results['failedOrders']}")
+        print(f"Tiempo total: {totalTime:.2f} segundos")
+
+    activeApplicationThreads = [
+        thread.name for thread in [*workerThreads, monitor] if thread.is_alive()
+    ]
+
+    print(f"Pedidos pendientes: {orderQueue.qsize()}")
+    print(f"Hilos de la aplicacion activos: {len(activeApplicationThreads)}")
+    showInventory(inventory, "Inventario restante")
+    print(f"Inventario negativo detectado: {hasNegativeStock(inventory)}")
 
 
 def processOrderInventory(order, inventory, inventoryLock):
@@ -342,7 +352,8 @@ def createMonitorThread(orderQueue, results, resultsLock, monitorStopEvent):
 
 def runApplication():
     print("NovaTech - Procesamiento concurrente de pedidos")
-    print("ETAPA 9: monitor de procesamiento activo.")
+    print("ETAPA 10: finalizacion y resumen completos.")
+    startTime = perf_counter()
     inventory = createInitialInventory()
     inventoryLock = Lock()
     results = createResults()
@@ -375,10 +386,16 @@ def runApplication():
     monitorStopEvent.set()
     monitor.join()
 
-    print(f"Pedidos pendientes al finalizar: {orderQueue.qsize()}")
-    showResultsSummary(results, resultsLock)
-    showInventory(inventory, "Inventario final temporal")
-    print(f"Inventario negativo detectado: {hasNegativeStock(inventory)}")
+    totalTime = perf_counter() - startTime
+    showFinalSummary(
+        results,
+        resultsLock,
+        totalTime,
+        inventory,
+        orderQueue,
+        workerThreads,
+        monitor,
+    )
 
 
 if __name__ == "__main__":
